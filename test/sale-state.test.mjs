@@ -119,3 +119,50 @@ test('exposes allowed event types by state and rejects illegal transitions', () 
     { name: 'IllegalTransitionError' },
   );
 });
+
+test('exercises every legal event listed in the state transition table', () => {
+  const cases = [
+    { state: available, event: { type: 'RESERVE', reservationId: 'r-1', expiresAt: 10, now: 1 }, expected: 'RESERVED' },
+    { state: available, event: { type: 'FAIL', reason: 'Rejected', retryable: true }, expected: 'FAILED' },
+    { state: { status: 'RESERVED', reservationId: 'r-1', expiresAt: 10 }, event: { type: 'START_CHECKOUT', reservationId: 'r-1', now: 1 }, expected: 'CHECKOUT' },
+    { state: { status: 'RESERVED', reservationId: 'r-1', expiresAt: 10 }, event: { type: 'EXPIRE', reservationId: 'r-1', now: 10 }, expected: 'EXPIRED' },
+    { state: { status: 'RESERVED', reservationId: 'r-1', expiresAt: 10 }, event: { type: 'FAIL', reservationId: 'r-1', reason: 'Rejected', retryable: true }, expected: 'FAILED' },
+    { state: { status: 'CHECKOUT', reservationId: 'r-1', expiresAt: 10 }, event: { type: 'COMPLETE_CHECKOUT', reservationId: 'r-1', orderId: 'o-1', now: 1 }, expected: 'SOLD' },
+    { state: { status: 'CHECKOUT', reservationId: 'r-1', expiresAt: 10 }, event: { type: 'EXPIRE', reservationId: 'r-1', now: 10 }, expected: 'EXPIRED' },
+    { state: { status: 'CHECKOUT', reservationId: 'r-1', expiresAt: 10 }, event: { type: 'FAIL', reservationId: 'r-1', reason: 'Rejected', retryable: true }, expected: 'FAILED' },
+    { state: { status: 'EXPIRED', reservationId: 'r-1' }, event: { type: 'RELEASE', reservationId: 'r-1' }, expected: 'AVAILABLE' },
+    { state: { status: 'FAILED', reason: 'No stock', retryable: true, recovery: available }, event: { type: 'RETRY', now: 1 }, expected: 'AVAILABLE' },
+    { state: { status: 'FAILED', reason: 'Payment failure', retryable: true, recovery: { status: 'RESERVED', reservationId: 'r-1', expiresAt: 10 } }, event: { type: 'RETRY', now: 1 }, expected: 'RESERVED' },
+    { state: { status: 'FAILED', reason: 'Payment failure', retryable: true, recovery: { status: 'RESERVED', reservationId: 'r-1', expiresAt: 10 } }, event: { type: 'RETRY', now: 10 }, expected: 'EXPIRED' },
+  ];
+
+  const exercisedEvents = new Map();
+  for (const { state, event, expected } of cases) {
+    assert.equal(transition(state, event).status, expected, `${state.status} + ${event.type}`);
+    const events = exercisedEvents.get(state.status) ?? new Set();
+    events.add(event.type);
+    exercisedEvents.set(state.status, events);
+  }
+
+  for (const [status, allowedEvents] of Object.entries(SALE_TRANSITION_TABLE)) {
+    assert.deepEqual(
+      [...(exercisedEvents.get(status) ?? new Set())].sort(),
+      [...allowedEvents].sort(),
+      `Every allowed event for ${status} must have a legal-transition test`,
+    );
+  }
+});
+
+test('rejects terminal, non-retryable, mismatched, and invalid-time transitions', () => {
+  const attempts = [
+    () => transition({ status: 'SOLD', reservationId: 'r-1', orderId: 'o-1' }, { type: 'RELEASE', reservationId: 'r-1' }),
+    () => transition({ status: 'FAILED', reason: 'Permanent', retryable: false, recovery: available }, { type: 'RETRY', now: 1 }),
+    () => transition({ status: 'EXPIRED', reservationId: 'r-1' }, { type: 'RELEASE', reservationId: 'r-2' }),
+    () => transition(available, { type: 'RESERVE', reservationId: 'r-1', expiresAt: 1, now: 1 }),
+    () => transition({ status: 'RESERVED', reservationId: 'r-1', expiresAt: 10 }, { type: 'FAIL', reason: 'Missing reservation id', retryable: true }),
+  ];
+
+  for (const attempt of attempts) {
+    assert.throws(attempt, { name: 'IllegalTransitionError' });
+  }
+});
