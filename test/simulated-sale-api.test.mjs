@@ -3,12 +3,40 @@ import test from 'node:test';
 import { createSimulatedSaleApi } from '../simulated-sale-api.ts';
 
 function createApi(overrides = {}) {
+  const ticker = createFakeTicker();
   return createSimulatedSaleApi({
     product: { id: 'phone-1', title: 'Flash phone', priceVnd: 12_990_000, initialStock: 2 },
     reservationTtlMs: 30_000,
     serverClock: () => 1_700_000_000_000,
+    setIntervalFn: ticker.setInterval,
+    clearIntervalFn: ticker.clearInterval,
     ...overrides,
   });
+}
+
+function createFakeTicker() {
+  const callbacks = new Map();
+  let nextId = 1;
+  let setCalls = 0;
+  let clearCalls = 0;
+  return {
+    setCalls: () => setCalls,
+    clearCalls: () => clearCalls,
+    setInterval(callback, intervalMs) {
+      setCalls += 1;
+      const id = nextId;
+      nextId += 1;
+      callbacks.set(id, { callback, intervalMs });
+      return id;
+    },
+    clearInterval(id) {
+      clearCalls += 1;
+      callbacks.delete(id);
+    },
+    tick() {
+      for (const { callback } of callbacks.values()) callback();
+    },
+  };
 }
 
 test('uses the injected server clock for snapshots and reservation expiry', async () => {
@@ -65,4 +93,52 @@ test('requires VND price, stock, and lock duration to be valid integers', () => 
   assert.throws(() => createApi({ product: { id: 'phone-1', title: 'Phone', priceVnd: 12_500.5, initialStock: 2 } }), /priceVnd/);
   assert.throws(() => createApi({ product: { id: 'phone-1', title: 'Phone', priceVnd: 12_500, initialStock: -1 } }), /initialStock/);
   assert.throws(() => createApi({ reservationTtlMs: 0 }), /reservationTtlMs/);
+});
+
+test('starts one shared expiry ticker and releases every due reservation once', async () => {
+  let serverNow = 1_000;
+  const ticker = createFakeTicker();
+  const api = createApi({
+    product: { id: 'phone-1', title: 'Flash phone', priceVnd: 12_990_000, initialStock: 2 },
+    reservationTtlMs: 500,
+    serverClock: () => serverNow,
+    setIntervalFn: ticker.setInterval,
+    clearIntervalFn: ticker.clearInterval,
+    expiryTickerMs: 100,
+  });
+
+  await api.reserve('first');
+  await api.reserve('second');
+  assert.equal(ticker.setCalls(), 1);
+  assert.equal(api.getSnapshot().availableStock, 0);
+
+  serverNow = 1_500;
+  ticker.tick();
+  assert.equal(api.getSnapshot().availableStock, 2);
+  ticker.tick();
+  assert.equal(api.getSnapshot().availableStock, 2);
+
+  api.dispose();
+  assert.equal(ticker.clearCalls(), 1);
+});
+
+test('checks expiry on API access and keeps repeated request keys idempotent after expiry', async () => {
+  let serverNow = 1_000;
+  const ticker = createFakeTicker();
+  const api = createApi({
+    reservationTtlMs: 500,
+    serverClock: () => serverNow,
+    setIntervalFn: ticker.setInterval,
+    clearIntervalFn: ticker.clearInterval,
+  });
+  const first = await api.reserve('same-request');
+
+  serverNow = 1_500;
+  const snapshot = api.getSnapshot();
+  const duplicate = await api.reserve('same-request');
+
+  assert.equal(snapshot.availableStock, 2);
+  assert.deepEqual(duplicate, first);
+  assert.equal(api.getSnapshot().availableStock, 2);
+  api.dispose();
 });

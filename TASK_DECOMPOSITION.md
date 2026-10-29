@@ -21,7 +21,8 @@ Build a Vite + TypeScript Vietnam mega-sale simulation with an accurate millisec
 - [x] **3.3 — Implement the anti-drift countdown:** Use `createAntiDriftTimer(onDisplayedSecondChange)` with the fixed target `2026-11-11T00:00:00+07:00`. Recompute from `Date.now()` deltas via `requestAnimationFrame`, callback only when the displayed second changes, pause while hidden, and recompute immediately on `visibilitychange` when visible.
 - [ ] **3.4 — Implement the inventory reservation service:** Add an in-memory authoritative stock ledger that grants unique reservations only while stock remains. Make the stock check and decrement atomic within the service operation; attach an `expiresAt` time and ensure duplicate requests cannot reserve twice.
   - [x] Add server-clock snapshots, integer VND product pricing, stock-bounded idempotent reservations, and configurable rejection in `simulated-sale-api.ts`.
-  - [ ] Release stock when reservations expire and integrate the API with the lifecycle state machine.
+  - [x] Store each reservation's `expiresAt` and release due inventory through one shared ticker; API reads also sweep due locks.
+  - [ ] Integrate API expiry and reservation results with the lifecycle state machine and optimistic UI rollback.
 - [ ] **3.5 — Implement the reservation state machine:** Integrate the lifecycle contract with the inventory ledger; reject illegal transitions and assert stock invariants.
   - [x] Implement pure lifecycle transitions, expiry guards, checkout completion, and failure recovery in `sale-state.ts`.
   - [ ] Integrate transitions with inventory changes and assert ledger invariants.

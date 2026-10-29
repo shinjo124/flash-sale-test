@@ -37,6 +37,7 @@ export type ReservationResult =
 export interface SimulatedSaleApi {
   getSnapshot(): SaleSnapshot;
   reserve(requestId: string): Promise<ReservationResult>;
+  dispose(): void;
 }
 
 export interface SimulatedSaleApiOptions {
@@ -44,6 +45,9 @@ export interface SimulatedSaleApiOptions {
   readonly reservationTtlMs: number;
   readonly serverClock?: () => number;
   readonly shouldRejectReservation?: (attempt: ReservationAttempt) => boolean;
+  readonly expiryTickerMs?: number;
+  readonly setIntervalFn?: (callback: () => void, intervalMs: number) => number;
+  readonly clearIntervalFn?: (tickerId: number) => void;
 }
 
 export function createSimulatedSaleApi(options: SimulatedSaleApiOptions): SimulatedSaleApi {
@@ -53,24 +57,44 @@ export function createSimulatedSaleApi(options: SimulatedSaleApiOptions): Simula
   const serverClock = options.serverClock ?? Date.now;
   const shouldRejectReservation = options.shouldRejectReservation ?? (() => false);
   const successfulRequests = new Map<string, Extract<ReservationResult, { accepted: true }>>();
+  const activeReservations = new Map<string, { expiresAt: number }>();
   let availableStock = product.initialStock;
   let nextReservationNumber = 1;
+  let disposed = false;
+
+  const expireDueReservations = (serverNow: number): void => {
+    for (const [reservationId, reservation] of activeReservations) {
+      if (serverNow < reservation.expiresAt) continue;
+      activeReservations.delete(reservationId);
+      availableStock += 1;
+    }
+  };
+
+  const scheduleTicker = options.setIntervalFn ?? setInterval;
+  const cancelTicker = options.clearIntervalFn ?? clearInterval;
+  const tickerId = scheduleTicker(
+    () => expireDueReservations(readServerTime(serverClock)),
+    options.expiryTickerMs ?? 250,
+  );
 
   return {
     getSnapshot() {
+      const serverNow = readServerTime(serverClock);
+      expireDueReservations(serverNow);
       return {
         product,
-        serverNow: readServerTime(serverClock),
+        serverNow,
         availableStock,
       };
     },
 
     async reserve(requestId) {
       requireNonEmptyText(requestId, 'requestId');
+      const serverNow = readServerTime(serverClock);
+      expireDueReservations(serverNow);
       const previousResult = successfulRequests.get(requestId);
       if (previousResult !== undefined) return previousResult;
 
-      const serverNow = readServerTime(serverClock);
       const attempt: ReservationAttempt = {
         productId: product.id,
         requestId,
@@ -107,8 +131,15 @@ export function createSimulatedSaleApi(options: SimulatedSaleApiOptions): Simula
 
       nextReservationNumber += 1;
       availableStock -= 1;
+      activeReservations.set(result.reservationId, { expiresAt: result.expiresAt });
       successfulRequests.set(requestId, result);
       return result;
+    },
+
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      cancelTicker(tickerId);
     },
   };
 }
@@ -119,6 +150,7 @@ function validateOptions(options: SimulatedSaleApiOptions): void {
   requireIntegerAtLeast(options.product.priceVnd, 0, 'product.priceVnd');
   requireIntegerAtLeast(options.product.initialStock, 0, 'product.initialStock');
   requireIntegerAtLeast(options.reservationTtlMs, 1, 'reservationTtlMs');
+  requireIntegerAtLeast(options.expiryTickerMs ?? 250, 1, 'expiryTickerMs');
 }
 
 function requireNonEmptyText(value: string, field: string): void {
