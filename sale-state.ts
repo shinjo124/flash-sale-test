@@ -33,13 +33,11 @@ export interface ExpiredState {
   readonly reservationId: string;
 }
 
-export type FailureRecovery = AvailableState | ReservedState;
-
 export interface FailedState {
   readonly status: 'FAILED';
   readonly reason: string;
   readonly retryable: boolean;
-  readonly recovery: FailureRecovery;
+  readonly reservationId?: string;
 }
 
 export type SaleState =
@@ -57,7 +55,7 @@ export type SaleEvent =
   | { readonly type: 'EXPIRE'; readonly reservationId: string; readonly now: number }
   | { readonly type: 'RELEASE'; readonly reservationId: string }
   | { readonly type: 'FAIL'; readonly reservationId?: string; readonly reason: string; readonly retryable: boolean }
-  | { readonly type: 'RETRY'; readonly now: number };
+  | { readonly type: 'RETRY' };
 
 export const SALE_TRANSITION_TABLE = {
   AVAILABLE: ['RESERVE', 'FAIL'],
@@ -74,7 +72,7 @@ export const SALE_TRANSITION_TABLE = {
  * RESERVED --START_CHECKOUT--> CHECKOUT; RESERVED --EXPIRE--> EXPIRED
  * CHECKOUT --COMPLETE_CHECKOUT--> SOLD; CHECKOUT --EXPIRE--> EXPIRED
  * RESERVED/CHECKOUT --FAIL--> FAILED; EXPIRED --RELEASE--> AVAILABLE
- * FAILED --RETRY--> AVAILABLE or RESERVED (or EXPIRED when its lock elapsed)
+ * FAILED --RETRY--> AVAILABLE; failure retains reservationId so callers can release its lock
  * SOLD is terminal. A checkout begun/completed at or after expiresAt becomes EXPIRED.
  *
  * This function reads no clock and mutates neither argument; callers pass `now`
@@ -93,7 +91,7 @@ export function transition(state: SaleState, event: SaleEvent): SaleState {
       if (event.type === 'FAIL') {
         requireText(event.reason, 'reason', state, event);
         if (event.reservationId !== undefined) reject(state, event);
-        return { status: 'FAILED', reason: event.reason, retryable: event.retryable, recovery: { status: 'AVAILABLE' } };
+        return { status: 'FAILED', reason: event.reason, retryable: event.retryable };
       }
       return reject(state, event);
 
@@ -129,11 +127,8 @@ export function transition(state: SaleState, event: SaleEvent): SaleState {
 
     case 'FAILED':
       if (event.type === 'RETRY') {
-        requireTime(event.now, 'now', state, event);
         if (!state.retryable) return reject(state, event);
-        if (state.recovery.status === 'AVAILABLE') return { status: 'AVAILABLE' };
-        if (event.now >= state.recovery.expiresAt) return expire(state.recovery.reservationId);
-        return { ...state.recovery };
+        return { status: 'AVAILABLE' };
       }
       return reject(state, event);
 
@@ -166,7 +161,7 @@ function failReservedState(state: ReservedState | CheckoutState, event: SaleEven
     status: 'FAILED',
     reason: event.reason,
     retryable: event.retryable,
-    recovery: { status: 'RESERVED', reservationId: state.reservationId, expiresAt: state.expiresAt },
+    reservationId: state.reservationId,
   };
 }
 

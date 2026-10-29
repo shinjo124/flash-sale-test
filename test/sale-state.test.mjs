@@ -63,7 +63,7 @@ test('does not expire a reservation before its deadline', () => {
   ), { name: 'IllegalTransitionError' });
 });
 
-test('failed checkout can retry while its original lock remains live', () => {
+test('failed checkout preserves its reservation id for release and retries from available', () => {
   const checkout = { status: 'CHECKOUT', reservationId: 'r-1', expiresAt: 5_000 };
   const failed = transition(checkout, {
     type: 'FAIL',
@@ -76,17 +76,9 @@ test('failed checkout can retry while its original lock remains live', () => {
     status: 'FAILED',
     reason: 'Payment service unavailable',
     retryable: true,
-    recovery: { status: 'RESERVED', reservationId: 'r-1', expiresAt: 5_000 },
-  });
-  assert.deepEqual(transition(failed, { type: 'RETRY', now: 4_000 }), {
-    status: 'RESERVED',
-    reservationId: 'r-1',
-    expiresAt: 5_000,
-  });
-  assert.deepEqual(transition(failed, { type: 'RETRY', now: 5_000 }), {
-    status: 'EXPIRED',
     reservationId: 'r-1',
   });
+  assert.deepEqual(transition(failed, { type: 'RETRY' }), available);
 });
 
 test('rejected reservation enters retryable failed state and can return to available', () => {
@@ -100,9 +92,8 @@ test('rejected reservation enters retryable failed state and can return to avail
     status: 'FAILED',
     reason: 'No stock remains',
     retryable: true,
-    recovery: available,
   });
-  assert.deepEqual(transition(failed, { type: 'RETRY', now: 1_000 }), available);
+  assert.deepEqual(transition(failed, { type: 'RETRY' }), available);
 });
 
 test('exposes allowed event types by state and rejects illegal transitions', () => {
@@ -131,9 +122,8 @@ test('exercises every legal event listed in the state transition table', () => {
     { state: { status: 'CHECKOUT', reservationId: 'r-1', expiresAt: 10 }, event: { type: 'EXPIRE', reservationId: 'r-1', now: 10 }, expected: 'EXPIRED' },
     { state: { status: 'CHECKOUT', reservationId: 'r-1', expiresAt: 10 }, event: { type: 'FAIL', reservationId: 'r-1', reason: 'Rejected', retryable: true }, expected: 'FAILED' },
     { state: { status: 'EXPIRED', reservationId: 'r-1' }, event: { type: 'RELEASE', reservationId: 'r-1' }, expected: 'AVAILABLE' },
-    { state: { status: 'FAILED', reason: 'No stock', retryable: true, recovery: available }, event: { type: 'RETRY', now: 1 }, expected: 'AVAILABLE' },
-    { state: { status: 'FAILED', reason: 'Payment failure', retryable: true, recovery: { status: 'RESERVED', reservationId: 'r-1', expiresAt: 10 } }, event: { type: 'RETRY', now: 1 }, expected: 'RESERVED' },
-    { state: { status: 'FAILED', reason: 'Payment failure', retryable: true, recovery: { status: 'RESERVED', reservationId: 'r-1', expiresAt: 10 } }, event: { type: 'RETRY', now: 10 }, expected: 'EXPIRED' },
+    { state: { status: 'FAILED', reason: 'No stock', retryable: true }, event: { type: 'RETRY' }, expected: 'AVAILABLE' },
+    { state: { status: 'FAILED', reason: 'Payment failure', retryable: true, reservationId: 'r-1' }, event: { type: 'RETRY' }, expected: 'AVAILABLE' },
   ];
 
   const exercisedEvents = new Map();
@@ -156,7 +146,7 @@ test('exercises every legal event listed in the state transition table', () => {
 test('rejects terminal, non-retryable, mismatched, and invalid-time transitions', () => {
   const attempts = [
     () => transition({ status: 'SOLD', reservationId: 'r-1', orderId: 'o-1' }, { type: 'RELEASE', reservationId: 'r-1' }),
-    () => transition({ status: 'FAILED', reason: 'Permanent', retryable: false, recovery: available }, { type: 'RETRY', now: 1 }),
+    () => transition({ status: 'FAILED', reason: 'Permanent', retryable: false }, { type: 'RETRY' }),
     () => transition({ status: 'EXPIRED', reservationId: 'r-1' }, { type: 'RELEASE', reservationId: 'r-2' }),
     () => transition(available, { type: 'RESERVE', reservationId: 'r-1', expiresAt: 1, now: 1 }),
     () => transition({ status: 'RESERVED', reservationId: 'r-1', expiresAt: 10 }, { type: 'FAIL', reason: 'Missing reservation id', retryable: true }),
