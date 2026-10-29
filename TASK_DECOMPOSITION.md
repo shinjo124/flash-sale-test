@@ -16,9 +16,13 @@ Build a Vite + TypeScript Vietnam mega-sale simulation with an accurate millisec
 
 - [ ] **3.1 — Bootstrap the app:** Create the Vite + TypeScript shell, minimal sale page, and build/dev scripts. Confirm the app starts.
 - [ ] **3.2 — Define contracts:** Specify product/inventory types, reservation token and expiry, checkout result, event types, and discriminated UI states before behavior. Define the legal state transitions and invariants, including `available >= 0` and `initialStock = available + activeReservations + sold`.
+  - [x] Define lifecycle states/events and a pure transition function with illegal-transition rejection in `sale-state.ts`.
+  - [ ] Define product and aggregate inventory-ledger contracts and their stock invariants.
 - [ ] **3.3 — Implement the anti-drift countdown:** Add `createAntiDriftTimer(durationMs, onTick)` using an absolute target time (`Date.now() + durationMs`) and `requestAnimationFrame`. Report `Math.max(0, targetTime - Date.now())`; do not decrement a counter with `setInterval`. Return an idempotent stop function and stop scheduling at zero.
 - [ ] **3.4 — Implement the inventory reservation service:** Add an in-memory authoritative stock ledger that grants unique reservations only while stock remains. Make the stock check and decrement atomic within the service operation; attach an `expiresAt` time and ensure duplicate requests cannot reserve twice.
-- [ ] **3.5 — Implement the reservation state machine:** Model available, reserving, reserved, expired, checkout, completed, and rejected/error states with typed events. Reject illegal transitions and assert inventory invariants.
+- [ ] **3.5 — Implement the reservation state machine:** Integrate the lifecycle contract with the inventory ledger; reject illegal transitions and assert stock invariants.
+  - [x] Implement pure lifecycle transitions, expiry guards, checkout completion, and failure recovery in `sale-state.ts`.
+  - [ ] Integrate transitions with inventory changes and assert ledger invariants.
 - [ ] **3.6 — Add optimistic reservation UI behavior:** Update the displayed available count immediately on a reserve action. Confirm it when the service grants a lock; restore it exactly once on conflict or failure. Prevent duplicate submission while the same request is pending.
 - [ ] **3.7 — Implement lock expiry:** Expire reservations from their absolute expiry time, return stock exactly once, and prevent checkout using an expired reservation. Keep expiry cleanup safe when the timer fires late or a reservation is already completed.
 - [ ] **3.8 — Implement checkout:** Allow checkout only for a valid active reservation. Consume the lock on success. On a checkout failure, keep the lock active until its original expiry so the buyer can retry; then release it if still unused. Make repeated checkout submission idempotent.
