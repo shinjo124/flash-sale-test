@@ -142,3 +142,42 @@ test('checks expiry on API access and keeps repeated request keys idempotent aft
   assert.equal(api.getSnapshot().availableStock, 2);
   api.dispose();
 });
+
+test('releases an active reservation to stock once and makes release idempotent', async () => {
+  const api = createApi();
+  const reservation = await api.reserve('release-request');
+  assert.equal(reservation.accepted, true);
+  if (!reservation.accepted) return;
+  assert.equal(api.getSnapshot().availableStock, 1);
+
+  assert.equal(api.releaseReservation(reservation.reservationId), true);
+  assert.equal(api.releaseReservation(reservation.reservationId), false);
+  assert.equal(api.getSnapshot().availableStock, 2);
+  api.dispose();
+});
+
+test('consumes an active reservation on checkout and rejects expired checkout', async () => {
+  let serverNow = 1_000;
+  const ticker = createFakeTicker();
+  const api = createApi({
+    serverClock: () => serverNow,
+    reservationTtlMs: 500,
+    setIntervalFn: ticker.setInterval,
+    clearIntervalFn: ticker.clearInterval,
+  });
+  const reservation = await api.reserve('checkout-request');
+  assert.equal(reservation.accepted, true);
+  if (!reservation.accepted) return;
+
+  const completed = await api.completeCheckout(reservation.reservationId, 'order-1');
+  assert.equal(completed.completed, true);
+  assert.equal(api.getSnapshot().availableStock, 1);
+
+  const secondReservation = await api.reserve('expired-checkout-request');
+  assert.equal(secondReservation.accepted, true);
+  if (!secondReservation.accepted) return;
+  serverNow = secondReservation.expiresAt;
+  const expired = await api.completeCheckout(secondReservation.reservationId, 'order-2');
+  assert.deepEqual(expired, { completed: false, reason: 'EXPIRED', serverNow, availableStock: 1 });
+  api.dispose();
+});

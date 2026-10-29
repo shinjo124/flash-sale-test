@@ -34,9 +34,26 @@ export type ReservationResult =
       readonly availableStock: number;
     };
 
+export type CheckoutResult =
+  | {
+      readonly completed: true;
+      readonly reservationId: string;
+      readonly orderId: string;
+      readonly serverNow: number;
+      readonly availableStock: number;
+    }
+  | {
+      readonly completed: false;
+      readonly reason: 'EXPIRED' | 'NOT_FOUND' | 'ALREADY_COMPLETED';
+      readonly serverNow: number;
+      readonly availableStock: number;
+    };
+
 export interface SimulatedSaleApi {
   getSnapshot(): SaleSnapshot;
   reserve(requestId: string): Promise<ReservationResult>;
+  releaseReservation(reservationId: string): boolean;
+  completeCheckout(reservationId: string, orderId: string): Promise<CheckoutResult>;
   dispose(): void;
 }
 
@@ -58,6 +75,8 @@ export function createSimulatedSaleApi(options: SimulatedSaleApiOptions): Simula
   const shouldRejectReservation = options.shouldRejectReservation ?? (() => false);
   const successfulRequests = new Map<string, Extract<ReservationResult, { accepted: true }>>();
   const activeReservations = new Map<string, { expiresAt: number }>();
+  const expiredReservations = new Set<string>();
+  const completedReservations = new Map<string, Extract<CheckoutResult, { completed: true }>>();
   let availableStock = product.initialStock;
   let nextReservationNumber = 1;
   let disposed = false;
@@ -66,6 +85,7 @@ export function createSimulatedSaleApi(options: SimulatedSaleApiOptions): Simula
     for (const [reservationId, reservation] of activeReservations) {
       if (serverNow < reservation.expiresAt) continue;
       activeReservations.delete(reservationId);
+      expiredReservations.add(reservationId);
       availableStock += 1;
     }
   };
@@ -133,6 +153,51 @@ export function createSimulatedSaleApi(options: SimulatedSaleApiOptions): Simula
       availableStock -= 1;
       activeReservations.set(result.reservationId, { expiresAt: result.expiresAt });
       successfulRequests.set(requestId, result);
+      return result;
+    },
+
+    releaseReservation(reservationId) {
+      requireNonEmptyText(reservationId, 'reservationId');
+      const serverNow = readServerTime(serverClock);
+      expireDueReservations(serverNow);
+      if (!activeReservations.delete(reservationId)) return false;
+      availableStock += 1;
+      return true;
+    },
+
+    async completeCheckout(reservationId, orderId) {
+      requireNonEmptyText(reservationId, 'reservationId');
+      requireNonEmptyText(orderId, 'orderId');
+      const previousResult = completedReservations.get(reservationId);
+      if (previousResult !== undefined) {
+        if (previousResult.orderId === orderId) return previousResult;
+        return {
+          completed: false,
+          reason: 'ALREADY_COMPLETED',
+          serverNow: readServerTime(serverClock),
+          availableStock,
+        };
+      }
+
+      const serverNow = readServerTime(serverClock);
+      expireDueReservations(serverNow);
+      if (!activeReservations.delete(reservationId)) {
+        return {
+          completed: false,
+          reason: expiredReservations.has(reservationId) ? 'EXPIRED' : 'NOT_FOUND',
+          serverNow,
+          availableStock,
+        };
+      }
+
+      const result = {
+        completed: true as const,
+        reservationId,
+        orderId,
+        serverNow,
+        availableStock,
+      };
+      completedReservations.set(reservationId, result);
       return result;
     },
 

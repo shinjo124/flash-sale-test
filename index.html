@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#111827" />
+    <title>11.11 Flash Sale</title>
+  </head>
+  <body>
+    <main class="page-shell">
+      <header class="hero">
+        <p class="eyebrow">Vietnam mega sale · 11.11</p>
+        <h1>Midnight Flash Sale</h1>
+        <p class="hero-copy">Lock an item before stock runs out. Reservations expire if checkout is not completed in time.</p>
+        <div class="countdown-panel">
+          <span class="countdown-label">Sale begins in</span>
+          <time id="sale-countdown" aria-label="Time remaining until the flash sale">Loading countdown…</time>
+          <span class="target-time">11 November 2026 · 00:00 ICT</span>
+        </div>
+      </header>
+
+      <section aria-labelledby="products-heading">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Limited inventory</p>
+            <h2 id="products-heading">Featured products</h2>
+          </div>
+          <span class="server-note">Prices in Vietnamese đồng</span>
+        </div>
+        <div id="product-grid" class="product-grid" aria-live="off"></div>
+      </section>
+      <p class="page-footer">Demo inventory is simulated locally. A confirmed reservation holds one unit until its server-clock expiry.</p>
+    </main>
+    <script type="module" src="/main.ts"></script>
+  </body>
+</html>
